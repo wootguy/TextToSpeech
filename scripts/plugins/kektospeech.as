@@ -1,3 +1,17 @@
+class Voice
+{
+	string folder; // name of folder
+	string name; // display name
+	
+	Voice(string ifolder, string iname)
+	{
+		folder = ifolder;
+		name = iname;
+	}
+	
+	Voice() {}
+}
+
 class Phoneme
 {
 	string soundFile;  // path to the sound clip
@@ -11,34 +25,36 @@ class Phoneme
 	
 	Phoneme(string codetxt)
 	{
-		soundFile = "texttospeech/macho/" + codetxt + ".ogg";
+		
+		soundFile = codetxt;
 		code = codetxt;
 		pitch = 100;
 		len = arpaLen(codetxt);
+		
+		// don't bother with these subtley different phonemes
+		if (codetxt == "ao") soundFile = "aa";
 	}
 	
 	Phoneme(string codetxt, int ipitch, float flen)
-	{
-		soundFile = "texttospeech/macho/" + codetxt + ".ogg";
+	{		
+		soundFile = codetxt;
 		code = codetxt;
 		pitch = ipitch;
 		len = flen;
+		
+		// don't bother with these subtley different phonemes
+		if (codetxt == "ao") soundFile = "aa";
 	}
 }
 
 class PlayerState
 {
 	CTextMenu@ menu;
-	string talker_id;  // voice this player is using
-	int pitch; 		   // voice pitch adjustment (100 = normal, range = 1-1000)
+	int voice;  // voice id this player is using
+	int pitch;	// voice pitch adjustment (100 = normal, range = 1-255)
 	
-	void initMenu(CBasePlayer@ plr, TextMenuPlayerSlotCallback@ callback, bool destroyOldMenu)
+	void initMenu(CBasePlayer@ plr, TextMenuPlayerSlotCallback@ callback)
 	{
-		destroyOldMenu = false; // Unregistering throws an error for whatever reason. TODO: Ask the big man why
-		if (destroyOldMenu and @menu !is null and menu.IsRegistered()) {
-			menu.Unregister();
-			@menu = null;
-		}
 		CTextMenu temp(@callback);
 		@menu = @temp;
 	}
@@ -48,9 +64,17 @@ class PlayerState
 		if ( menu.Register() == false ) {
 			g_Game.AlertMessage( at_console, "Oh dear menu registration failed\n");
 		}
-		menu.Open(10, 0, plr);
+		menu.Open(0, 0, plr);
 	}
 }
+
+array<Voice> g_all_voices = {
+	Voice("w00tguy", "Default"),
+	Voice("macho", "\"Macho Man\" Randy Savage"),
+	Voice("morgan", "Morgan Freeman"),
+	Voice("portal", "Portal Turret")
+};
+int default_voice = 2;
 
 // All possible sound channels we can use
 array<SOUND_CHANNEL> channels = {CHAN_STATIC, CHAN_VOICE, CHAN_STREAM, CHAN_BODY, CHAN_ITEM, CHAN_NETWORKVOICE_BASE, CHAN_AUTO, CHAN_WEAPON};
@@ -61,7 +85,7 @@ dictionary english;
 dictionary special_chars;
 dictionary lettermap;
 dictionary long_sounds;
-string default_voice = "";
+dictionary voice_choices;
 array<EHandle> players;
 
 void print(string text) { g_Game.AlertMessage( at_console, "kektospeech: " + text); }
@@ -76,7 +100,7 @@ void PluginInit()
 	g_Hooks.RegisterHook( Hooks::Game::MapChange, @MapChange );
 
 	loadLetterMap();
-	loadVoiceData();
+	loadPhonemes();
 	loadMisc();
 	loadEnglishWords();
 }
@@ -85,10 +109,16 @@ void MapInit()
 {
 	g_Game.AlertMessage( at_console, "Precaching " + g_all_phonemes.length() + " sounds\n");
 	
-	for (uint i = 0; i < g_all_phonemes.length(); i++) {
-		g_SoundSystem.PrecacheSound(g_all_phonemes[i].soundFile);
-		g_Game.PrecacheGeneric("sound/" + g_all_phonemes[i].soundFile);
+	for (uint k = 0; k < g_all_voices.length(); k++)
+	{
+		for (uint i = 0; i < g_all_phonemes.length(); i++) 
+		{
+			string snd = "texttospeech/" + g_all_voices[k].folder + "/" + g_all_phonemes[i].soundFile + ".ogg";
+			g_SoundSystem.PrecacheSound(snd);
+			g_Game.PrecacheGeneric("sound/" + snd);
+		}
 	}
+	
 }
 
 HookReturnCode MapChange()
@@ -141,6 +171,22 @@ void loadLetterMap() {
 	lettermap['x'] = 's';
 	lettermap['y'] = 'y';
 	lettermap['z'] = 'z';
+	
+	// combos
+	lettermap['ch'] = 'ch';
+	lettermap['ah'] = 'ae';
+	lettermap['ae'] = 'ae';
+	lettermap['uh'] = 'ah';
+	lettermap['ow'] = 'aw';
+	lettermap['ai'] = 'ay';
+	lettermap['th'] = 'th';
+	lettermap['er'] = 'er';
+	lettermap['ee'] = 'ey';
+	lettermap['ih'] = 'ih';
+	lettermap['ih'] = 'ih';
+	lettermap['oy'] = 'oy';
+	lettermap['oo'] = 'uw';
+	lettermap['ll'] = 'l';
 }
 
 int errs = 0;
@@ -203,6 +249,15 @@ void loadEnglishWords(File@ f=null)
 			}
 		}
 	}
+	
+	updatePlayerList();
+	if (players.length() > 0 and players[0])
+	{
+		CBaseEntity@ ent = players[0];
+		CBasePlayer@ plr = cast<CBasePlayer@>(ent);
+		g_PlayerFuncs.SayText(plr, "Text to speech dictionary loaded.\n");
+	}
+	
 }
 
 void loadMisc()
@@ -271,8 +326,8 @@ void loadMisc()
 	long_sounds['uw'] = 1;
 }
 
-void loadVoiceData()
-{	
+void loadPhonemes()
+{
 	g_all_phonemes.insertLast(Phoneme("aa"));
 	g_all_phonemes.insertLast(Phoneme("ae"));
 	g_all_phonemes.insertLast(Phoneme("ah"));
@@ -328,9 +383,9 @@ void updatePlayerList()
 	} while (ent !is null);
 }
 
-void playSoundDelay(Phoneme@ pho) {
+void playSoundDelay(Phoneme@ pho, string voice) {
 	float vol = 1.0f;
-	uint gain = 1; // increase to amplify voice
+	//uint gain = 1; // increase to amplify voice
 	
 	// play for all players, but on a single channel so phonemes don't overlap
 	for (uint i = 0; i < players.length(); i++)
@@ -338,10 +393,10 @@ void playSoundDelay(Phoneme@ pho) {
 		if (players[i])
 		{
 			CBaseEntity@ plr = players[i];
-			g_SoundSystem.PlaySound(plr.edict(), CHAN_VOICE, pho.soundFile, vol, ATTN_NONE, 0, pho.pitch, plr.entindex());	
+			string file = "texttospeech/" + voice + "/" + pho.soundFile + ".ogg";
+			g_SoundSystem.PlaySound(plr.edict(), CHAN_VOICE, file, vol, ATTN_NONE, 0, pho.pitch, plr.entindex());	
 		}
-	}
-	
+	}	
 }
 
 float arpaLen(string c)
@@ -524,30 +579,35 @@ array<Phoneme> getPhonemes(string word)
 		phos = cast<array<Phoneme>>(english[word]);
 	} 
 	else 
-	{ // freestyle it
-		string pho = "";
+	{   
+		// freestyle it
 		for (uint i = 0; i < word.Length(); i++)
 		{
-			string letter = word[i];
-			letter = letter.ToLowercase();
-			if (lettermap.exists(letter)) {
-				string val;
-				lettermap.get(letter, val);
-				pho += val;
+			string letter = string(word[i]).ToLowercase();
+			string next = "";
+			if (i < word.Length() - 1)
+				next = string(word[i+1]).ToLowercase();
 				
-				Phoneme@ p = Phoneme(val);					
-				phos.insertLast(p);
+			string val;
+			if (lettermap.exists(letter + next))
+			{
+				lettermap.get(letter + next, val);
+				array<string> ps = val.Split(" ");
+				
+				for (uint k = 0; k < ps.length(); k++)
+					phos.insertLast(Phoneme(ps[k]));
+					
+				i++;
+			}
+			else if (lettermap.exists(letter)) 
+			{
+				lettermap.get(letter, val);			
+				phos.insertLast(Phoneme(val));
 			} else {
 				println("NO LETTER FOR: " + letter);
 			}
 		}
 	}
-	
-	//phos.insertLast(Phoneme("bi", 100, 0.2f));
-	//phos.insertLast(Phoneme("ing", 95, 0.1f));`
-	//phos.insertLast(Phoneme(".", 100, 0.4f));
-	//phos.insertLast(Phoneme("wuh", 100, 0.2f));
-	//phos.insertLast(Phoneme("nn", 95, 0.2f));
 
 	return phos;
 }
@@ -573,7 +633,7 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 			string special = word[inum];
 			bool isLongNumber = false;
 			
-			if (special.FindFirstOf("0123456789.,$-") == 0 and word.Length() > 1) // part of a number?
+			if (special.FindFirstOf("0123456789.,$-") == 0 and (word.Length() - inum) > 1) // part of a number?
 			{
 				string next = word.SubString(inum+1);
 				while (next.FindFirstOf("0123456789.,$-") == 0)
@@ -692,16 +752,15 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 			pho.pitch = 30;
 		else if (pho.pitch > 255)
 			pho.pitch = 255;
-			
 		
-		//println("SPEAK: " + pho.code + " " + pitch);
+		//println("SPEAK: " + pho.soundFile + " " + pitch);
 		
 		if (pho.code == ".")
 			delay += 0.3f;
 		else if (pho.code == " ") {
 			delay += 0.15f;
 		} else {
-			g_Scheduler.SetTimeout("playSoundDelay", delay, @pho);
+			g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, g_all_voices[state.voice].folder);
 			delay += pho.len;
 		}
 	}
@@ -720,11 +779,24 @@ PlayerState@ getPlayerState(CBasePlayer@ plr)
 	if ( !player_states.exists(steamId) )
 	{
 		PlayerState state;
-		state.talker_id = default_voice;
+		state.voice = default_voice;
 		state.pitch = 100;
 		player_states[steamId] = state;
 	}
 	return cast<PlayerState@>( player_states[steamId] );
+}
+
+void voiceMenuCallback(CTextMenu@ menu, CBasePlayer@ plr, int page, const CTextMenuItem@ item)
+{
+	if (item is null)
+		return; // selected "Exit"
+	PlayerState@ state = getPlayerState(plr);
+	
+	string choice;
+	item.m_pUserData.retrieve(choice);
+	state.voice = atoi(choice);
+	
+	g_PlayerFuncs.SayText(plr, "Your text-to-speech voice was set to " + g_all_voices[state.voice].name + "\n");
 }
 
 bool doCommand(CBasePlayer@ plr, const CCommand@ args)
@@ -735,21 +807,34 @@ bool doCommand(CBasePlayer@ plr, const CCommand@ args)
 	{
 		if ( args[0] == ".tts" )
 		{
-			if (args.ArgC() > 2)
+			if (args.ArgC() > 1)
 			{
-				if (args[1] == "pitch")
+				if (args[1] == "pitch" and args.ArgC() > 2)
 				{
 					int pitch = atoi(args[2]);
 					state.pitch = pitch;
 					g_PlayerFuncs.SayText(plr, "Your text-to-speech voice pitch was set to " + pitch + "\n");
+					return true;
+				}
+				else if (args[1] == "voice")
+				{
+					state.initMenu(plr, voiceMenuCallback);
+					state.menu.SetTitle("Voice selection:\n\n");
+					
+					for (uint k = 0; k < g_all_voices.length(); k++)
+						state.menu.AddItem(g_all_voices[k].name + "\n", any(string(k)));
+					state.openMenu(plr);
+					return true;
 				}
 			}
 			else
 			{
 				g_PlayerFuncs.SayText(plr, "Text to speech commands:\n");
 				g_PlayerFuncs.SayText(plr, 'Say ".tts pitch X" to change your voice pitch (where X = 1-255).\n');
-				//g_PlayerFuncs.SayText(plr, 'Say ".tts voice" to select a different voice.\n');
+				g_PlayerFuncs.SayText(plr, 'Say ".tts voice" to select a different voice.\n');
 			}
+
+			
 			return true;
 		}
 	}
