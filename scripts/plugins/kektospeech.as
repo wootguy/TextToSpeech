@@ -9,7 +9,8 @@ array<Voice> g_all_voices = {
 	Voice("macho", "\"Macho Man\" Randy Savage"),
 	Voice("portal", "Portal Turret"),
 	Voice("w00tguy", "w00tguy"),
-	Voice("keen", "Keen")
+	Voice("keen", "Keen"),
+	Voice("", "None (disables speech)")
 };
 
 //
@@ -421,7 +422,6 @@ void updatePlayerList()
 
 void playSoundDelay(Phoneme@ pho, string voice, int channelIdx) {
 	float vol = 1.0f;
-	//uint gain = 1; // increase to amplify voice
 	
 	// play for all players, but on a single channel so phonemes don't overlap
 	for (uint i = 0; i < players.length(); i++)
@@ -649,7 +649,7 @@ array<Phoneme> getPhonemes(string word)
 }
 
 
-// try to pick one that isn't being used
+// pick the least saturated one
 int getBestChannel()
 {
 	array<string>@ stateKeys = player_states.getKeys();	
@@ -676,21 +676,25 @@ int getBestChannel()
 		}
 	}
 	
-	println("BEST CHANNEL: " + bestChannel + " USAGE: " + leastUsage);
+	//println("BEST CHANNEL: " + bestChannel + " USAGE: " + leastUsage);
 	return bestChannel;
 }
 
-// handles player chats
+// where the magic happens
 void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 {	
 	bool shout = false;
 	bool ask = false;
 	
-	updatePlayerList();
-	
 	PlayerState@ state = getPlayerState(plr);
+	
+	if (g_all_voices[state.voice].folder == "") // Chose "None" voice (disables text to speech)
+		return;
+	
 	state.channel = -1; // ignore self in getBestChannel
 	state.channel = getBestChannel();
+	
+	updatePlayerList();
 	
 	if (state.speaking.length() > 0)
 	{
