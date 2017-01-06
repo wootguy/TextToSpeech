@@ -129,6 +129,8 @@ void MapInit()
 	
 	for (uint k = 0; k < g_all_voices.length(); k++)
 	{
+		if (g_all_voices[k].folder == "")
+			continue;
 		for (uint i = 0; i < g_all_phonemes.length(); i++) 
 		{
 			string snd = "texttospeech/" + g_all_voices[k].folder + "/" + g_all_phonemes[i].soundFile + ".ogg";
