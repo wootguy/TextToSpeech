@@ -1,3 +1,21 @@
+
+// **************************************************
+//
+// ADD OR REMOVE VOICES HERE
+// Format is: Voice("folder name", "Display name"),
+//
+array<Voice> g_all_voices = {
+	Voice("morgan", "Morgan Freeman"),
+	Voice("macho", "\"Macho Man\" Randy Savage"),
+	Voice("portal", "Portal Turret"),
+	Voice("w00tguy", "w00tguy"),
+	Voice("keen", "Keen")
+};
+
+//
+// **************************************************
+
+
 class Voice
 {
 	string folder; // name of folder
@@ -25,7 +43,6 @@ class Phoneme
 	
 	Phoneme(string codetxt)
 	{
-		
 		soundFile = codetxt;
 		code = codetxt;
 		pitch = 100;
@@ -50,8 +67,11 @@ class Phoneme
 class PlayerState
 {
 	CTextMenu@ menu;
-	int voice;  // voice id this player is using
-	int pitch;	// voice pitch adjustment (100 = normal, range = 1-255)
+	int voice = 0;  // voice id this player is using
+	int pitch = 100;	// voice pitch adjustment (100 = normal, range = 1-255)
+	int channel = -1;
+	array<CScheduledFunction@> speaking; // list of phonemes that are scheduled to be spoken
+	float speakEnd; // time when speech will be over on channel
 	
 	void initMenu(CBasePlayer@ plr, TextMenuPlayerSlotCallback@ callback)
 	{
@@ -68,16 +88,9 @@ class PlayerState
 	}
 }
 
-array<Voice> g_all_voices = {
-	Voice("w00tguy", "Default"),
-	Voice("macho", "\"Macho Man\" Randy Savage"),
-	Voice("morgan", "Morgan Freeman"),
-	Voice("portal", "Portal Turret")
-};
-int default_voice = 2;
+int default_voice = 0;
 
 // All possible sound channels we can use
-array<SOUND_CHANNEL> channels = {CHAN_STATIC, CHAN_VOICE, CHAN_STREAM, CHAN_BODY, CHAN_ITEM, CHAN_NETWORKVOICE_BASE, CHAN_AUTO, CHAN_WEAPON};
 dictionary player_states; // persistent-ish player data, organized by steam-id or username if on a LAN server, values are @PlayerState
 array<Phoneme@> g_all_phonemes; // for straight-forward precaching, duplicates the data in g_talkers
 dictionary g_phonemes;
@@ -88,7 +101,10 @@ dictionary long_sounds;
 dictionary voice_choices;
 array<EHandle> players;
 
-void print(string text) { g_Game.AlertMessage( at_console, "kektospeech: " + text); }
+// speakers will cycle through channels for each talk so we can play multiple voices at once
+array<SOUND_CHANNEL> g_channels = {CHAN_STATIC, CHAN_VOICE, CHAN_STREAM};
+
+void print(string text) { g_Game.AlertMessage( at_console, "tts: " + text); }
 void println(string text) { print(text + "\n"); }
 void printSuccess() { g_Game.AlertMessage( at_console, "SUCCESS\n"); }
 
@@ -98,6 +114,7 @@ void PluginInit()
 	g_Module.ScriptInfo.SetContactInfo( "w00tguy123 - forums.svencoop.com" );
 	g_Hooks.RegisterHook( Hooks::Player::ClientSay, @ClientSay );	
 	g_Hooks.RegisterHook( Hooks::Game::MapChange, @MapChange );
+	g_Hooks.RegisterHook( Hooks::Player::ClientPutInServer, @ClientJoin );
 
 	loadLetterMap();
 	loadPhonemes();
@@ -191,6 +208,8 @@ void loadLetterMap() {
 
 int errs = 0;
 int totalWords = 0;
+bool halfwayLoaded = false;
+bool startedLoad = false;
 
 void loadEnglishWords(File@ f=null)
 {
@@ -201,6 +220,18 @@ void loadEnglishWords(File@ f=null)
 		@f = g_FileSystem.OpenFile( dataPath, OpenFile::READ );
 	}
 	
+	if (!startedLoad)
+	{
+		updatePlayerList();
+		if (players.length() > 0 and players[0])
+		{
+			CBaseEntity@ ent = players[0];
+			CBasePlayer@ plr = cast<CBasePlayer@>(ent);
+			g_PlayerFuncs.SayText(plr, "Text to speech dictionary is loading...\n");
+		}
+		startedLoad = true;
+	}
+	
 	int linesRead = 0;
 	
 	if( f !is null && f.IsOpen() )
@@ -209,22 +240,31 @@ void loadEnglishWords(File@ f=null)
 		while( !f.EOFReached() )
 		{
 			f.ReadLine( line );
-			line.Trim();
 			
-			if (line.Length() == 0 || line.Find(";;;") == 0 || int(line.Find("(")) != -1) {
+			if (line.Length() == 0 || line[0] == ';') {
 				continue;
 			}
 			
 			if (totalWords % 1000 == 0)
-				println("Load " + ((f.Tell() / float(f.GetSize())) * 100) + "%%");
+			{
+				//println("Load " + ((f.Tell() / float(f.GetSize())) * 100) + "%%");
+				if (!halfwayLoaded and (f.Tell() / float(f.GetSize())) >= 0.5f)
+				{
+					updatePlayerList();
+					if (players.length() > 0 and players[0])
+					{
+						CBaseEntity@ ent = players[0];
+						CBasePlayer@ plr = cast<CBasePlayer@>(ent);
+						g_PlayerFuncs.SayText(plr, "Text to speech dictionary is 50% loaded.\n");
+					}
+					halfwayLoaded = true;
+				}
+			}
 			
 			string word = line.SubString(0, line.FindFirstOf(" "));
 			array<string> phos = line.SubString(line.Find("  ") + 2).Split(" ");
 			
 			array<Phoneme> pronounce;
-			
-			string pho = "";
-			int cons = 0;
 			for (uint i = 0; i < phos.length(); i++) 
 			{
 				string p = phos[i];
@@ -233,13 +273,10 @@ void loadEnglishWords(File@ f=null)
 				string last = p[p.Length()-1];
 				if (last == "0" || last == "1" || last == "2")
 					p = p.SubString(0, p.Length()-1);
-					
-				p = p.ToLowercase();
 
-				pronounce.insertLast(Phoneme(p));
+				pronounce.insertLast(Phoneme(p.ToLowercase()));
 			}
 				
-			
 			english[word] = pronounce;
 			totalWords++;
 			
@@ -255,9 +292,8 @@ void loadEnglishWords(File@ f=null)
 	{
 		CBaseEntity@ ent = players[0];
 		CBasePlayer@ plr = cast<CBasePlayer@>(ent);
-		g_PlayerFuncs.SayText(plr, "Text to speech dictionary loaded.\n");
+		g_PlayerFuncs.SayText(plr, "Text to speech dictionary is 100% loaded.\n");
 	}
-	
 }
 
 void loadMisc()
@@ -279,7 +315,7 @@ void loadMisc()
 	special_chars['#'] = 'hashtag';
 	special_chars['$'] = 'dollar';
 	special_chars['%'] = 'percent';
-	special_chars['^'] = 'carrot';
+	special_chars['^'] = 'caret';
 	special_chars['&'] = 'and';
 	special_chars['*'] = 'asterisk';
 	special_chars['('] = 'open paren';
@@ -383,7 +419,7 @@ void updatePlayerList()
 	} while (ent !is null);
 }
 
-void playSoundDelay(Phoneme@ pho, string voice) {
+void playSoundDelay(Phoneme@ pho, string voice, int channelIdx) {
 	float vol = 1.0f;
 	//uint gain = 1; // increase to amplify voice
 	
@@ -394,7 +430,7 @@ void playSoundDelay(Phoneme@ pho, string voice) {
 		{
 			CBaseEntity@ plr = players[i];
 			string file = "texttospeech/" + voice + "/" + pho.soundFile + ".ogg";
-			g_SoundSystem.PlaySound(plr.edict(), CHAN_VOICE, file, vol, ATTN_NONE, 0, pho.pitch, plr.entindex());	
+			g_SoundSystem.PlaySound(plr.edict(), g_channels[channelIdx], file, vol, ATTN_NONE, 0, pho.pitch, plr.entindex());
 		}
 	}	
 }
@@ -613,6 +649,37 @@ array<Phoneme> getPhonemes(string word)
 }
 
 
+// try to pick one that isn't being used
+int getBestChannel()
+{
+	array<string>@ stateKeys = player_states.getKeys();	
+	array<int> channelUsage(g_channels.length());
+	for (uint i = 0; i < g_channels.length(); i++)
+		channelUsage[i] = 0;
+	
+	for (uint i = 0; i < stateKeys.length(); i++)
+	{
+		PlayerState@ state = cast<PlayerState@>( player_states[stateKeys[i]] );
+		if (state.channel >= 0 and state.channel < int(g_channels.length()))
+			if (state.speakEnd > g_Engine.time)
+				channelUsage[state.channel]++;
+	}
+	
+	int bestChannel = 0;
+	int leastUsage = 32;
+	for (uint i = 0; i < channelUsage.length(); i++)
+	{
+		if (channelUsage[i] < leastUsage)
+		{
+			bestChannel = i;
+			leastUsage = channelUsage[i];
+		}
+	}
+	
+	println("BEST CHANNEL: " + bestChannel + " USAGE: " + leastUsage);
+	return bestChannel;
+}
+
 // handles player chats
 void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 {	
@@ -622,6 +689,15 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 	updatePlayerList();
 	
 	PlayerState@ state = getPlayerState(plr);
+	state.channel = -1; // ignore self in getBestChannel
+	state.channel = getBestChannel();
+	
+	if (state.speaking.length() > 0)
+	{
+		for (uint i = 0; i < state.speaking.length(); i++)
+			g_Scheduler.RemoveTimer(state.speaking[i]);
+		state.speaking.resize(0);
+	}
 	
 	array<string> words;
 	for (int i = 0; i < args.ArgC(); i++)
@@ -662,7 +738,7 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 			}
 			else if (special_chars.exists(special))
 			{
-				if (word.FindFirstOf("!,.?'") == word.Length()-1) // just punctuation?
+				if (word.FindFirstOf("!,.?'") == word.Length()-1 and inum == int(word.Length()-1)) // just punctuation?
 				{
 					if (special == "," || special == ".")
 						words.insertLast(".");
@@ -711,6 +787,12 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 		all_phos.insertLast(Phoneme(" "));
 	}
 	
+	bool all_consonants = false;
+	if (totalVowels == 0)
+	{
+		totalVowels = all_phos.length();
+		all_consonants = true; // still want to do intonation changes tho
+	}
 	float vol = 1.0f;
 	float delay = 0;
 	int pitch = state.pitch;
@@ -722,7 +804,7 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 	for (uint i = 0; i < all_phos.length(); i++) {
 		Phoneme@ pho = all_phos[i];
 		
-		if (long_sounds.exists(pho.code))
+		if (long_sounds.exists(pho.code) || all_consonants)
 		{
 			if (ask)
 			{
@@ -760,11 +842,12 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 		else if (pho.code == " ") {
 			delay += 0.15f;
 		} else {
-			g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, g_all_voices[state.voice].folder);
+			state.speaking.insertLast( g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, g_all_voices[state.voice].folder, state.channel) );
 			delay += pho.len;
 		}
 	}
-		
+	
+	state.speakEnd = g_Engine.time + delay;
 }
 
 
@@ -781,6 +864,7 @@ PlayerState@ getPlayerState(CBasePlayer@ plr)
 		PlayerState state;
 		state.voice = default_voice;
 		state.pitch = 100;
+		state.speakEnd = 0;
 		player_states[steamId] = state;
 	}
 	return cast<PlayerState@>( player_states[steamId] );
@@ -858,7 +942,13 @@ HookReturnCode ClientSay( SayParameters@ pParams )
 	return HOOK_CONTINUE;
 }
 
-CClientCommand _noclip("vc", "Voice command menu", @voiceCmd );
+HookReturnCode ClientJoin(CBasePlayer@ plr) 
+{
+	updatePlayerList();
+	return HOOK_CONTINUE;
+}
+
+CClientCommand _tts("tts", "Text to speech settings", @voiceCmd );
 
 void voiceCmd( const CCommand@ args )
 {
