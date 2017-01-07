@@ -8,6 +8,7 @@ array<Voice> g_all_voices = {
 	Voice("morgan", "Morgan Freeman"),
 	Voice("macho", "\"Macho Man\" Randy Savage"),
 	Voice("portal", "Portal Turret"),
+	Voice("dectalk", "Moonbase Alpha"),
 	Voice("w00tguy", "w00tguy"),
 	Voice("keen", "Keen"),
 	Voice("", "None (disables speech)")
@@ -440,11 +441,10 @@ void playSoundDelay(Phoneme@ pho, string voice, int channelIdx) {
 float arpaLen(string c)
 {
 	if (c == "l") return 0.15f;
-	if (c == "r") return 0.2f;
 	if (c == "b") return 0.05f;
 	if (c == "g") return 0.06f;
 	if (c == "dh") return 0.075f;
-	if (c == "jh" || c == "r") return 0.15f;
+	if (c == "jh") return 0.15f;
 	if (c.Length() == 1 || c == "hh" || c == "th") return 0.1f;
 	return 0.15f;
 }
