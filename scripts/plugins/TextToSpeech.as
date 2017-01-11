@@ -38,9 +38,11 @@ class Phoneme
 	string code;       // how this sound appears as text ("ch", "aa")
 	int pitch;
 	float len; // length of the sound
+	int stress; // stress value
 	
 	Phoneme() {
 		pitch = 100;
+		stress = 0;
 	}
 	
 	Phoneme(string codetxt)
@@ -48,9 +50,22 @@ class Phoneme
 		soundFile = codetxt;
 		code = codetxt;
 		pitch = 100;
-		len = arpaLen(codetxt);
+		stress = 2;
+		len = arpaLen(codetxt, stress);
 		
 		// don't bother with these subtley different phonemes
+		if (codetxt == "ao") soundFile = "aa";
+	}
+	
+	Phoneme(string codetxt, int istress)
+	{
+		soundFile = codetxt;
+		code = codetxt;
+		pitch = 100;
+		stress = istress;
+		len = arpaLen(codetxt, stress);
+		
+		// don't bother with this weird one. Who pronounces "ought" like oh-aa-t?
 		if (codetxt == "ao") soundFile = "aa";
 	}
 	
@@ -60,6 +75,7 @@ class Phoneme
 		code = codetxt;
 		pitch = ipitch;
 		len = flen;
+		stress = 2;
 		
 		// don't bother with these subtley different phonemes
 		if (codetxt == "ao") soundFile = "aa";
@@ -273,12 +289,16 @@ void loadEnglishWords(File@ f=null)
 			{
 				string p = phos[i];
 				
-				// strip "stress" number
+				// get stress value
+				int stress = 0;
 				string last = p[p.Length()-1];
 				if (last == "0" || last == "1" || last == "2")
+				{
 					p = p.SubString(0, p.Length()-1);
+					stress = atoi(last);
+				}
 
-				pronounce.insertLast(Phoneme(p.ToLowercase()));
+				pronounce.insertLast(Phoneme(p.ToLowercase(), stress));
 			}
 				
 			english[word] = pronounce;
@@ -438,15 +458,21 @@ void playSoundDelay(Phoneme@ pho, string voice, int channelIdx) {
 	}	
 }
 
-float arpaLen(string c)
+float arpaLen(string c, int stress)
 {
 	if (c == "l") return 0.15f;
 	if (c == "b") return 0.05f;
 	if (c == "g") return 0.06f;
 	if (c == "dh") return 0.075f;
 	if (c == "jh") return 0.15f;
-	if (c.Length() == 1 || c == "hh" || c == "th") return 0.1f;
-	return 0.15f;
+	if (c == "d") return 0.1f;
+	if (c.Length() == 1 || c == "hh" || c == "th") return 0.08f;
+	
+	if (stress == 2) // secondary stress (slightly more than 0 stress)
+		return 0.15f;
+	if (stress == 1) // primary stress (considerably more stress)
+		return 0.25f;
+	return 0.13f;
 }
 
 // converts a long number to words
@@ -841,12 +867,12 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 		else if (pho.pitch > 255)
 			pho.pitch = 255;
 		
-		//println("SPEAK: " + pho.soundFile + " " + pitch);
+		//println("SPEAK: " + pho.soundFile + " " + pho.stress);
 		
 		if (pho.code == ".")
-			delay += 0.3f;
+			delay += 0.2f;
 		else if (pho.code == " ") {
-			delay += 0.15f;
+			delay += 0.1f;
 		} else {
 			state.speaking.insertLast( g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, g_all_voices[state.voice].folder, state.channel) );
 			delay += pho.len;
