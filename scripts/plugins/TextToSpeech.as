@@ -297,7 +297,7 @@ void loadEnglishWords(File@ f=null)
 			}
 			
 			string word = line.SubString(0, line.FindFirstOf(" "));
-			array<string> phos = line.SubString(line.Find("  ") + 2).Split(" ");
+			array<string> phos = line.SubString(line.Find(" ") + 1).Split(" ");
 			
 			array<Phoneme> pronounce;
 			for (uint i = 0; i < phos.length(); i++) 
