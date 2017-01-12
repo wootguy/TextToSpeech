@@ -251,7 +251,7 @@ void loadEnglishWords(File@ f=null)
 	// http://www.speech.cs.cmu.edu/cgi-bin/cmudict
 	
 	if (f is null) {
-		string dataPath = "scripts/plugins/cmudict-0.7b.txt";
+		string dataPath = "scripts/plugins/tts/cmudict-0.7b.txt";
 		@f = g_FileSystem.OpenFile( dataPath, OpenFile::READ );
 	}
 	
