@@ -1,18 +1,19 @@
 
 // **************************************************
 //
-// ADD OR REMOVE VOICES HERE
-// Format is: Voice("folder name", "Display name"),
+// ADD, REMOVE, AND REARRANGE VOICES HERE
+// Format is: Voice(volume percentage, "folder name", "Display name"),
 //
-array<Voice> g_all_voices = {
-	Voice("morgan", "Morgan Freeman"),
-	Voice("macho", "\"Macho Man\" Randy Savage"),
-	Voice("portal", "Portal Turret"),
-	Voice("dectalk", "Moonbase Alpha"),
-	Voice("grunt", "Grunt"),
-	Voice("w00tguy", "w00tguy"),
-	Voice("keen", "Keen"),
-	Voice("", "None (disables speech)")
+array<Voice> g_all_voices = 
+{
+	Voice(100, "morgan",  "Morgan Freeman"),
+	Voice(100, "macho",   "\"Macho Man\" Randy Savage"),
+	Voice(100, "portal",  "Portal Turret"),
+	Voice(100, "dectalk", "Moonbase Alpha"),
+	Voice(50,  "grunt",   "HL Grunt"),
+	Voice(100, "w00tguy", "w00tguy"),
+	Voice(100, "keen",    "Keen"),
+	Voice(0,   "",        "None (disables speech)")
 };
 
 //
@@ -23,11 +24,15 @@ class Voice
 {
 	string folder; // name of folder
 	string name; // display name
+	float volume; // default volume level
 	
-	Voice(string ifolder, string iname)
+	Voice(int ivolume, string ifolder, string iname)
 	{
 		folder = ifolder;
 		name = iname;
+		if (ivolume < 0) ivolume = 0;
+		if (ivolume > 100) ivolume = 100;
+		volume = ivolume / 100.0f;
 	}
 	
 	Voice() {}
@@ -89,6 +94,7 @@ class PlayerState
 	int voice = 0;  // voice id this player is using
 	int pitch = 100;	// voice pitch adjustment (100 = normal, range = 1-255)
 	int channel = -1;
+	float volume = 1.0f;
 	array<CScheduledFunction@> speaking; // list of phonemes that are scheduled to be spoken
 	float speakEnd; // time when speech will be over on channel
 	
@@ -127,6 +133,10 @@ void print(string text) { g_Game.AlertMessage( at_console, "tts: " + text); }
 void println(string text) { print(text + "\n"); }
 void printSuccess() { g_Game.AlertMessage( at_console, "SUCCESS\n"); }
 
+CCVar@ g_disabled;
+CCVar@ g_spam_length;
+CCVar@ g_spam_delay;
+
 void PluginInit()
 {
 	g_Module.ScriptInfo.SetAuthor( "w00tguy" );
@@ -139,6 +149,10 @@ void PluginInit()
 	loadPhonemes();
 	loadMisc();
 	loadEnglishWords();
+	
+	@g_disabled = CCVar("disabled", 0, "Disables speech for all users", ConCommandFlag::AdminOnly);
+	@g_spam_length = CCVar("spam_length", 0, "Length in seconds before message is considered spam and cancelled", ConCommandFlag::AdminOnly);
+	@g_spam_delay = CCVar("spam_delay", 0, "Time in seconds before a user is allowed to speak another message", ConCommandFlag::AdminOnly);
 }
 
 void MapInit()
@@ -444,17 +458,19 @@ void updatePlayerList()
 	} while (ent !is null);
 }
 
-void playSoundDelay(Phoneme@ pho, string voice, int channelIdx) {
-	float vol = 1.0f;
-	
+void playSoundDelay(Phoneme@ pho, Voice@ voice, int channelIdx) {
 	// play for all players, but on a single channel so phonemes don't overlap
 	for (uint i = 0; i < players.length(); i++)
 	{
 		if (players[i])
 		{
 			CBaseEntity@ plr = players[i];
-			string file = "texttospeech/" + voice + "/" + pho.soundFile + ".ogg";
-			g_SoundSystem.PlaySound(plr.edict(), g_channels[channelIdx], file, vol, ATTN_NONE, 0, pho.pitch, plr.entindex());
+			PlayerState@ state = getPlayerState(cast<CBasePlayer@>(plr));
+			if (state.volume > 0)
+			{
+				string file = "texttospeech/" + voice.folder + "/" + pho.soundFile + ".ogg";
+				g_SoundSystem.PlaySound(plr.edict(), g_channels[channelIdx], file, state.volume*voice.volume, ATTN_NONE, 0, pho.pitch, plr.entindex());
+			}
 		}
 	}	
 }
@@ -532,8 +548,6 @@ array<string> convertLongNumber(string longnum)
 		{				
 			string snum = parts[i];
 			int num = atoi(parts[i]);
-			
-			println("SAY PART: " + num);
 			
 			string word;
 			if (num >= 100)
@@ -717,8 +731,11 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 	
 	PlayerState@ state = getPlayerState(plr);
 	
-	if (g_all_voices[state.voice].folder == "") // Chose "None" voice (disables text to speech)
+	if (g_disabled.GetBool() or g_all_voices[state.voice].folder == "") // Chose "None" voice (disables text to speech)
 		return;
+		
+	if (g_spam_delay.GetFloat() > 0 and g_Engine.time < state.speakEnd + g_spam_delay.GetFloat())
+		return; // not enough time passed between messages
 	
 	state.channel = -1; // ignore self in getBestChannel
 	state.channel = getBestChannel();
@@ -891,8 +908,11 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 		else if (pho.code == " ") {
 			delay += 0.1f;
 		} else {
-			state.speaking.insertLast( g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, g_all_voices[state.voice].folder, state.channel) );
+			state.speaking.insertLast( g_Scheduler.SetTimeout("playSoundDelay", delay, @pho, @g_all_voices[state.voice], state.channel) );
 			delay += pho.len;
+			
+			if (g_spam_length.GetFloat() > 0 and delay > g_spam_length.GetFloat())
+				break; // just stop here. It's a spam message.
 		}
 	}
 	
@@ -913,6 +933,7 @@ PlayerState@ getPlayerState(CBasePlayer@ plr)
 		PlayerState state;
 		state.voice = default_voice;
 		state.pitch = 100;
+		state.volume = 1.0f;
 		state.speakEnd = 0;
 		player_states[steamId] = state;
 	}
@@ -940,6 +961,12 @@ bool doCommand(CBasePlayer@ plr, const CCommand@ args)
 	{
 		if ( args[0] == ".tts" )
 		{
+			if (g_disabled.GetBool())
+			{
+				g_PlayerFuncs.SayText(plr, 'Say "Text to speech is currently disabled.\n');
+				return true;
+			}
+			
 			if (args.ArgC() > 1)
 			{
 				if (args[1] == "pitch" and args.ArgC() > 2)
@@ -947,6 +974,15 @@ bool doCommand(CBasePlayer@ plr, const CCommand@ args)
 					int pitch = atoi(args[2]);
 					state.pitch = pitch;
 					g_PlayerFuncs.SayText(plr, "Your text-to-speech voice pitch was set to " + pitch + "\n");
+					return true;
+				}
+				else if (args[1] == "vol" and args.ArgC() > 2)
+				{
+					int vol = atoi(args[2]);
+					if (vol < 0) vol = 0;
+					if (vol > 100) vol = 100;
+					state.volume = vol / 100.0f;
+					g_PlayerFuncs.SayText(plr, "Text-to-speech volume set to " + vol + "%\n");
 					return true;
 				}
 				else if (args[1] == "voice")
@@ -965,6 +1001,11 @@ bool doCommand(CBasePlayer@ plr, const CCommand@ args)
 				g_PlayerFuncs.SayText(plr, "Text to speech commands:\n");
 				g_PlayerFuncs.SayText(plr, 'Say ".tts pitch X" to change your voice pitch (where X = 1-255).\n');
 				g_PlayerFuncs.SayText(plr, 'Say ".tts voice" to select a different voice.\n');
+				g_PlayerFuncs.SayText(plr, 'Say ".tts vol X" to adjust global speech volume (where X = 0-100).\n');
+				if (g_spam_length.GetFloat() > 0 or g_spam_delay.GetFloat() > 0)
+					g_PlayerFuncs.SayText(plr, 'TTS anti-spam is enabled (Length ' + g_spam_length.GetFloat() + ', Delay ' + g_spam_delay.GetFloat() + ').\n');
+				else
+					g_PlayerFuncs.SayText(plr, 'TTS anti-spam is disabled.\n');
 			}
 
 			
