@@ -9,6 +9,7 @@ array<Voice> g_all_voices = {
 	Voice("macho", "\"Macho Man\" Randy Savage"),
 	Voice("portal", "Portal Turret"),
 	Voice("dectalk", "Moonbase Alpha"),
+	Voice("grunt", "Grunt"),
 	Voice("w00tguy", "w00tguy"),
 	Voice("keen", "Keen"),
 	Voice("", "None (disables speech)")
@@ -770,7 +771,23 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 			}
 			else if (special_chars.exists(special))
 			{
-				if (word.FindFirstOf("!,.?'") == word.Length()-1 and inum == int(word.Length()-1)) // just punctuation?
+				// interpret dots at the end of a word as pauses
+				bool dotdotdot = true;
+				if (word[inum] == '.')
+				{
+					for (uint k = inum+1; k < word.Length(); k++)
+					{
+						if (word[k] != '.')
+						{
+							dotdotdot = false;
+							break;
+						}
+					}
+				}
+				else
+					dotdotdot = false;
+				
+				if (dotdotdot or (word.FindFirstOf("!,.?'") == word.Length()-1 and inum == int(word.Length()-1))) // just punctuation?
 				{
 					if (special == "," || special == ".")
 						words.insertLast(".");
