@@ -11,6 +11,7 @@ array<Voice> g_all_voices =
 	Voice(100, "portal",  "Portal Turret"),
 	Voice(100, "dectalk", "Moonbase Alpha"),
 	Voice(50,  "grunt",   "HL Grunt"),
+	Voice(100,  "holo",   "Hologram Assistant"),
 	Voice(100, "w00tguy", "w00tguy"),
 	Voice(100, "keen",    "Keen"),
 	Voice(0,   "",        "None (disables speech)")
