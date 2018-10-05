@@ -1,3 +1,4 @@
+#include "ByteBuffer"
 
 // **************************************************
 //
@@ -8,10 +9,10 @@ array<Voice> g_all_voices =
 {
 	Voice(100, "morgan",  "Morgan Freeman"),
 	Voice(100, "macho",   "\"Macho Man\" Randy Savage"),
-	Voice(100, "portal",  "Portal Turret"),
-	Voice(100, "dectalk", "Moonbase Alpha"),
+	Voice(70, "portal",  "Portal Turret"),
+	Voice(90, "moon", "Moonbase Alpha"),
 	Voice(50,  "grunt",   "HL Grunt"),
-	Voice(100,  "holo",   "Hologram Assistant"),
+	Voice(95,  "holo2",   "Hologram Assistant"),
 	Voice(100, "w00tguy", "w00tguy"),
 	Voice(100, "keen",    "Keen"),
 	Voice(0,   "",        "None (disables speech)")
@@ -119,7 +120,10 @@ int default_voice = 0;
 // All possible sound channels we can use
 dictionary player_states; // persistent-ish player data, organized by steam-id or username if on a LAN server, values are @PlayerState
 array<Phoneme@> g_all_phonemes; // for straight-forward precaching, duplicates the data in g_talkers
+array<Phoneme@> g_all_phos_with_stress; // all possible combinations of phonemes and stress values
 dictionary g_phonemes;
+dictionary g_pho_to_idx;
+dictionary g_idx_to_pho;
 dictionary english;
 dictionary special_chars;
 dictionary lettermap;
@@ -150,6 +154,8 @@ void PluginInit()
 	loadPhonemes();
 	loadMisc();
 	loadEnglishWords();
+	
+	g_Scheduler.SetTimeout("FetchBotChat", 0.0);
 	
 	@g_disabled = CCVar("disabled", 0, "Disables speech for all users", ConCommandFlag::AdminOnly);
 	@g_spam_length = CCVar("spam_length", 0, "Length in seconds before message is considered spam and cancelled", ConCommandFlag::AdminOnly);
@@ -247,6 +253,7 @@ int totalWords = 0;
 bool halfwayLoaded = false;
 bool startedLoad = false;
 
+// I tried saving to a ByteBuffer but decoding took ages, and loading bytes wasn't any faster
 void loadEnglishWords(File@ f=null)
 {
 	// http://www.speech.cs.cmu.edu/cgi-bin/cmudict
@@ -281,46 +288,25 @@ void loadEnglishWords(File@ f=null)
 				continue;
 			}
 			
-			if (totalWords % 1000 == 0)
-			{
-				//println("Load " + ((f.Tell() / float(f.GetSize())) * 100) + "%%");
-				if (!halfwayLoaded and (f.Tell() / float(f.GetSize())) >= 0.5f)
-				{
-					updatePlayerList();
-					if (players.length() > 0 and players[0])
-					{
-						CBaseEntity@ ent = players[0];
-						CBasePlayer@ plr = cast<CBasePlayer@>(ent);
-						g_PlayerFuncs.SayText(plr, "Text to speech dictionary is 50% loaded.\n");
-					}
-					halfwayLoaded = true;
-				}
-			}
-			
 			string word = line.SubString(0, line.FindFirstOf(" "));
 			array<string> phos = line.SubString(line.Find(" ") + 1).Split(" ");
 			
-			array<Phoneme> pronounce;
+			array<uint8> pronounce;
 			for (uint i = 0; i < phos.length(); i++) 
 			{
-				string p = phos[i];
-				
-				// get stress value
-				int stress = 0;
-				string last = p[p.Length()-1];
-				if (last == "0" || last == "1" || last == "2")
+				uint8 val = 0;
+				if (!g_pho_to_idx.exists(phos[i]))
 				{
-					p = p.SubString(0, p.Length()-1);
-					stress = atoi(last);
+					println("Invalid pho: " + phos[i]);
 				}
-
-				pronounce.insertLast(Phoneme(p.ToLowercase(), stress));
+				g_pho_to_idx.get(phos[i], val);
+				pronounce.insertLast(val);
 			}
 				
 			english[word] = pronounce;
 			totalWords++;
 			
-			if (linesRead++ > 32) {
+			if (linesRead++ > 64) {
 				g_Scheduler.SetTimeout("loadEnglishWords", 0, @f);
 				return;
 			}
@@ -443,6 +429,25 @@ void loadPhonemes()
 	g_all_phonemes.insertLast(Phoneme("y"));
 	g_all_phonemes.insertLast(Phoneme("z"));
 	g_all_phonemes.insertLast(Phoneme("zh"));
+	
+	for (uint stress = 0; stress < 3; stress++)
+	{
+		for (uint k = 0; k < g_all_phonemes.size(); k++)
+		{
+			string sval = g_all_phonemes[k].code + stress;
+			uint datValue = k + (stress << 6);
+			Phoneme pho(g_all_phonemes[k].code, stress);
+			g_all_phos_with_stress.insertLast(pho);
+			g_idx_to_pho[datValue] = pho;
+			
+			g_pho_to_idx[sval.ToUppercase()] = datValue;
+			if (stress == 0)
+			{
+				sval = g_all_phonemes[k].code;
+				g_pho_to_idx[sval.ToUppercase()] = datValue;
+			}
+		}
+	}
 }
 
 void updatePlayerList()
@@ -656,7 +661,12 @@ array<Phoneme> getPhonemes(string word)
 	word = word.ToUppercase();
 	if (english.exists(word)) 
 	{
-		phos = cast<array<Phoneme>>(english[word]);
+		array<uint8> phoValues = cast<array<uint8>>(english[word]);
+		for (uint i = 0; i < phoValues.size(); i++)
+		{
+			Phoneme p = cast<Phoneme>(g_idx_to_pho[phoValues[i]]);
+			phos.insertLast(p);
+		}
 	} 
 	else 
 	{   
@@ -725,7 +735,7 @@ int getBestChannel()
 }
 
 // where the magic happens
-void doSpeech(CBasePlayer@ plr, const CCommand@ args)
+void doSpeech(CBasePlayer@ plr, array<string> args)
 {	
 	bool shout = false;
 	bool ask = false;
@@ -751,7 +761,7 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 	}
 	
 	array<string> words;
-	for (int i = 0; i < args.ArgC(); i++)
+	for (uint i = 0; i < args.size(); i++)
 	{
 		string word = args[i];
 		int inum = 0;
@@ -918,6 +928,16 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 	}
 	
 	state.speakEnd = g_Engine.time + delay;
+	
+	// let bots know when they can talk again without overlapping
+	if (g_bot_chat_ent)
+	{
+		CBaseEntity@ chat = g_bot_chat_ent;
+		if (chat.pev.fuser1 < state.speakEnd)
+		{
+			chat.pev.fuser1 = state.speakEnd;
+		}
+	}
 }
 
 
@@ -925,7 +945,7 @@ void doSpeech(CBasePlayer@ plr, const CCommand@ args)
 PlayerState@ getPlayerState(CBasePlayer@ plr)
 {	
 	string steamId = g_EngineFuncs.GetPlayerAuthId( plr.edict() );
-	if (steamId == 'STEAM_ID_LAN') {
+	if (steamId == 'STEAM_ID_LAN' or steamId == 'BOT') {
 		steamId = plr.pev.netname;
 	}
 	
@@ -954,30 +974,79 @@ void voiceMenuCallback(CTextMenu@ menu, CBasePlayer@ plr, int page, const CTextM
 	g_PlayerFuncs.SayText(plr, "Your text-to-speech voice was set to " + g_all_voices[state.voice].name + "\n");
 }
 
-bool doCommand(CBasePlayer@ plr, const CCommand@ args)
+array<string> argsToArray( const CCommand@ args)
+{
+	array<string> new_args;
+	for (int i = 0; i < args.ArgC(); i++)
+		new_args.insertLast(args[i]);
+	return new_args;
+}
+
+EHandle g_bot_chat_ent;
+int lastChatIdx = -1;
+void FetchBotChat()
+{
+	if (g_bot_chat_ent)
+	{
+		CBaseEntity@ chat = g_bot_chat_ent;
+		if (chat.pev.iuser1 != lastChatIdx)
+		{
+			lastChatIdx = chat.pev.iuser1;
+			
+			edict_t@ e_plr = @g_EngineFuncs.PEntityOfEntIndex(chat.pev.iuser2);
+			CBasePlayer@ plr =  cast<CBasePlayer@>(g_EntityFuncs.Instance(e_plr));
+			if (plr !is null)
+			{
+				string cmd = chat.pev.message;
+				array<string> split_args = cmd.Split(" ");
+				array<string> args;
+				for (uint i = 0; i < split_args.size(); i++)
+					if (split_args[i].Length() > 0)
+						args.insertLast(split_args[i]);
+				if (args.length() > 0)
+					HandleBotChat(plr, args);
+			}
+		}
+		g_Scheduler.SetTimeout("FetchBotChat", 0.0);
+	}
+	else
+	{
+		g_bot_chat_ent = @g_EntityFuncs.FindEntityByTargetname(null, "w00tbot_chat"); 
+		g_Scheduler.SetTimeout("FetchBotChat", 1.0);
+	}
+}
+
+void HandleBotChat(CBasePlayer@ plr, array<string> args)
+{
+	if (doCommand(plr, args))
+		return;
+	doSpeech(plr, args);
+}
+
+bool doCommand(CBasePlayer@ plr, array<string> args)
 {
 	PlayerState@ state = getPlayerState(plr);
 	
-	if ( args.ArgC() > 0 )
+	if ( args.size() > 0 )
 	{
 		if ( args[0] == ".tts" )
 		{
 			if (g_disabled.GetBool())
 			{
-				g_PlayerFuncs.SayText(plr, 'Say "Text to speech is currently disabled.\n');
+				g_PlayerFuncs.SayText(plr, 'Text to speech is currently disabled.\n');
 				return true;
 			}
 			
-			if (args.ArgC() > 1)
+			if (args.size() > 1)
 			{
-				if (args[1] == "pitch" and args.ArgC() > 2)
+				if (args[1] == "pitch" and args.size() > 2)
 				{
 					int pitch = atoi(args[2]);
 					state.pitch = pitch;
 					g_PlayerFuncs.SayText(plr, "Your text-to-speech voice pitch was set to " + pitch + "\n");
 					return true;
 				}
-				else if (args[1] == "vol" and args.ArgC() > 2)
+				else if (args[1] == "vol" and args.size() > 2)
 				{
 					int vol = atoi(args[2]);
 					if (vol < 0) vol = 0;
@@ -988,12 +1057,28 @@ bool doCommand(CBasePlayer@ plr, const CCommand@ args)
 				}
 				else if (args[1] == "voice")
 				{
-					state.initMenu(plr, voiceMenuCallback);
-					state.menu.SetTitle("Voice selection:\n\n");
+					if (args.size() > 2)
+					{
+						for (uint k = 0; k < g_all_voices.length(); k++)
+						{
+							if (int(g_all_voices[k].name.ToLowercase().Find(args[2])) != -1)
+							{
+								state.voice = k;
+								g_PlayerFuncs.SayText(plr, "Your text-to-speech voice was set to " + g_all_voices[k].name + "\n");
+								break;
+							}
+						}
+					}
+					else
+					{
+						state.initMenu(plr, voiceMenuCallback);
+						state.menu.SetTitle("Voice selection:\n\n");
+						
+						for (uint k = 0; k < g_all_voices.length(); k++)
+							state.menu.AddItem(g_all_voices[k].name + "\n", any(string(k)));
+						state.openMenu(plr);
+					}
 					
-					for (uint k = 0; k < g_all_voices.length(); k++)
-						state.menu.AddItem(g_all_voices[k].name + "\n", any(string(k)));
-					state.openMenu(plr);
 					return true;
 				}
 			}
@@ -1021,13 +1106,13 @@ HookReturnCode ClientSay( SayParameters@ pParams )
 	CBasePlayer@ plr = pParams.GetPlayer();
 	const CCommand@ args = pParams.GetArguments();
 	
-	if (doCommand(plr, args))
+	if (doCommand(plr, argsToArray(args)))
 	{
 		pParams.ShouldHide = true;
 		return HOOK_HANDLED;
 	}
 	else {		
-		doSpeech(plr, args);
+		doSpeech(plr, argsToArray(args));
 	}
 	
 	return HOOK_CONTINUE;
@@ -1044,5 +1129,5 @@ CClientCommand _tts("tts", "Text to speech settings", @voiceCmd );
 void voiceCmd( const CCommand@ args )
 {
 	CBasePlayer@ plr = g_ConCommandSystem.GetCurrentPlayer();
-	doCommand(plr, args);
+	doCommand(plr, argsToArray(args));
 }
