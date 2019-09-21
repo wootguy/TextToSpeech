@@ -1,4 +1,5 @@
 #include "ByteBuffer"
+#include "HashMap"
 
 // **************************************************
 //
@@ -124,12 +125,12 @@ array<Phoneme@> g_all_phos_with_stress; // all possible combinations of phonemes
 dictionary g_phonemes;
 dictionary g_pho_to_idx;
 dictionary g_idx_to_pho;
-dictionary english;
 dictionary special_chars;
 dictionary lettermap;
 dictionary long_sounds;
 dictionary voice_choices;
 array<EHandle> players;
+HashMapArrayUint8 english(131072);
 
 // speakers will cycle through channels for each talk so we can play multiple voices at once
 array<SOUND_CHANNEL> g_channels = {CHAN_STATIC, CHAN_VOICE, CHAN_STREAM};
@@ -302,8 +303,8 @@ void loadEnglishWords(File@ f=null)
 				g_pho_to_idx.get(phos[i], val);
 				pronounce.insertLast(val);
 			}
-				
-			english[word] = pronounce;
+			
+			english.put(word, pronounce);
 			totalWords++;
 			
 			if (linesRead++ > 64) {
@@ -312,6 +313,9 @@ void loadEnglishWords(File@ f=null)
 			}
 		}
 	}
+	
+	//println("TOTAL WORDS: " + totalWords);
+	//english.stats();
 	
 	updatePlayerList();
 	if (players.length() > 0 and players[0])
@@ -661,7 +665,7 @@ array<Phoneme> getPhonemes(string word)
 	word = word.ToUppercase();
 	if (english.exists(word)) 
 	{
-		array<uint8> phoValues = cast<array<uint8>>(english[word]);
+		array<uint8> phoValues = english.get(word);
 		for (uint i = 0; i < phoValues.size(); i++)
 		{
 			Phoneme p = cast<Phoneme>(g_idx_to_pho[phoValues[i]]);
