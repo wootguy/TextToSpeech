@@ -15,9 +15,9 @@ please install on all servers
 
 
 # Chat/Console Commands:
-`.tts` = show help
-`.tts voice` = choose a voice
-`.tts pitch X` = set voice pitch (where X = 1-255)
+`.tts` = show help  
+`.tts voice` = choose a voice  
+`.tts pitch X` = set voice pitch (where X = 1-255)  
 `.tts vol X` = set global speech volume (where X = 0-100)
 
 
