@@ -1,4 +1,3 @@
-#include "ByteBuffer"
 #include "HashMap"
 
 // **************************************************
@@ -307,7 +306,7 @@ void loadEnglishWords(File@ f=null)
 			english.put(word, pronounce);
 			totalWords++;
 			
-			if (linesRead++ > 64) {
+			if (linesRead++ > 32) {
 				g_Scheduler.SetTimeout("loadEnglishWords", 0, @f);
 				return;
 			}
