@@ -1075,10 +1075,10 @@ bool doCommand(CBasePlayer@ plr, array<string> args)
 					else
 					{
 						state.initMenu(plr, voiceMenuCallback);
-						state.menu.SetTitle("Voice selection:\n\n");
+						state.menu.SetTitle("Voice selection:\n");
 						
 						for (uint k = 0; k < g_all_voices.length(); k++)
-							state.menu.AddItem(g_all_voices[k].name + "\n", any(string(k)));
+							state.menu.AddItem(g_all_voices[k].name, any(string(k)));
 						state.openMenu(plr);
 					}
 					
