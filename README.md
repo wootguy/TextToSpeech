@@ -39,6 +39,25 @@ With players quickly spamming long lines of nonsense, net usage will stay relati
 
 The number of precached sounds = 38 * number of voices (266 by default). This shouldn't be a problem since SC 5.0 has 8192 precache slots and most maps are designed to run with less than 512.
 
+# Installation
+1) Extract the folders to svencoop_addon (or wherever you prefer)
+
+2) Add this to svencoop/default_plugins.txt to enable the plugin:
+```
+  "plugin"
+  {
+    "name" "TextToSpeech"
+    "script" "tts/TextToSpeech"
+    "concommandns" "tts"
+  }
+```
+
+This plugin should be as far toward the end of your plugin list as possible.
+If it is too high, you will hear speech for other plugin commands.
+If you don't hear any sounds, move it up in the list and try again.
+Some plugins can prevent others lower in the list
+from using chat commands.
+
 
 # Adding your own voice:
 1) Make a new folder in sound/texttospeech/
